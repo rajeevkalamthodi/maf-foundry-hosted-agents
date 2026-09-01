@@ -4,46 +4,64 @@ A minimal, easy-to-follow reference showing how to build a **multi-agent orchest
 with the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) and run
 it as a **Microsoft Foundry hosted agent**.
 
-Three simple agents are chained into one linear pipeline using the Agent Framework's
-`WorkflowBuilder`:
+Three simple agents are involved. Incident Commander is the one the caller talks to; it
+delegates to the other two as **tools**, using the Agent Framework's `Agent.as_tool()`
+("agents-as-tools") pattern:
 
 ```
-┌──────────────────────┐     ┌─────────────────────┐     ┌───────────────────────┐
-│  Incident Commander   │ --> │   Grid Operations    │ --> │  Customer Experience  │
-│  (triage & routing)   │     │  (technical detail)   │     │  (customer draft)     │
-└──────────────────────┘     └─────────────────────┘     └───────────────────────┘
+                         ┌───────────────────────┐
+                    ┌──> │   Grid Operations     │
+                    │    │  (technical detail)   │
+┌──────────────────┐│    └───────────────────────┘
+│ Incident Commander││
+│ (triage & routing)│    ┌───────────────────────┐
+└──────────────────┘└──> │  Customer Experience  │
+                         │  (customer draft)     │
+                         └───────────────────────┘
 ```
 
 | Agent | Role |
 |---|---|
-| **Incident Commander** | Reads the raw incident report, classifies intent/severity, and produces a short triage summary. |
-| **Grid Operations** | Takes the triage summary and adds the technical outage / asset / restoration assessment. |
-| **Customer Experience** | Turns the technical assessment into a short, reviewable customer-facing status update (a draft only — it never auto-publishes). |
+| **Incident Commander** | The agent you talk to. Answers casual messages directly; for a real incident report, calls the two specialists below (in order) and assembles their results. |
+| **Grid Operations** | Called as a tool (`consult_grid_operations`). Given the incident details, explains the outage state, affected assets, and restoration options. |
+| **Customer Experience** | Called as a tool (`draft_customer_update`). Given the Grid Operations assessment, drafts a short, reviewable customer-facing status update (a draft only — it never auto-publishes). |
 
-Each agent only sees the previous agent's output (`context_mode="last_agent"`), and only the
-final Customer Experience draft is returned to the caller. This is the same orchestration
-pattern you'd use for any sequential multi-agent pipeline — the code is intentionally generic
-so you can relabel the agents and instructions for your own scenario.
+There's no hand-written switch/if-else routing logic — **the model itself decides** which
+tool(s) to call based on the tool descriptions it's given, the same way it would decide to call
+any other tool. Each agent is a separate file under [`src/incident-commander/agents/`](src/incident-commander/agents/),
+so you can read, relabel, or extend any one of them independently.
 
 > This sample is deliberately simple: one hosted agent process, one shared model client,
-> three `Agent` instances wired together with `WorkflowBuilder`. No tools, no external
-> connectors — just the core orchestration pattern.
+> three plain `Agent` instances. No external connectors — just the core
+> agents-as-tools orchestration pattern.
 
-See [`src/incident-commander/main.py`](src/incident-commander/main.py) for the full
-implementation (~100 lines, heavily commented).
+See [`src/incident-commander/main.py`](src/incident-commander/main.py) (entry point) and
+[`src/incident-commander/agents/`](src/incident-commander/agents/) (the three agents) for the
+full implementation.
 
 ## How it works
 
 - `FoundryChatClient` — a single chat client shared by all three agents, pointed at your
-  Foundry project + model deployment.
-- `Agent` — each of the three specialists is a plain `Agent` with its own `instructions` and `name`.
-- `AgentExecutor(agent, context_mode="last_agent")` — wraps each agent so it only receives the
-  previous step's output, not the full conversation history.
-- `WorkflowBuilder` — wires the three executors into a linear pipeline (`start_executor` +
-  `add_edge(...)`) and limits the returned output to the final executor (`output_executors=[...]`).
-- `.build().as_agent()` — converts the workflow into a standard Agent Framework agent.
-- `ResponsesHostServer` — serves that agent over the Foundry **Responses** protocol so it can
-  run locally and be deployed as a Foundry hosted agent unchanged.
+  Foundry project + model deployment ([`main.py`](src/incident-commander/main.py)).
+- `Agent` — each specialist ([`agents/grid_operations.py`](src/incident-commander/agents/grid_operations.py),
+  [`agents/customer_experience.py`](src/incident-commander/agents/customer_experience.py)) is a plain
+  `Agent` with its own `instructions` and `name` — no workflow wiring required.
+- `Agent.as_tool(name=..., description=..., arg_name=...)` — wraps each specialist agent as a
+  callable `FunctionTool` ([`agents/incident_commander.py`](src/incident-commander/agents/incident_commander.py)).
+  The `description` is what the orchestrator's model reads to decide *when* to call it.
+- `Agent(..., tools=[...])` — Incident Commander is a plain `Agent` too, just with the two
+  specialist tools registered. Its `instructions` describe the routing policy in plain English.
+- `ResponsesHostServer` — serves Incident Commander over the Foundry **Responses** protocol so
+  it can run locally and be deployed as a Foundry hosted agent unchanged.
+
+> **Why not `WorkflowBuilder`?** An earlier version of this sample chained the three agents
+> with `WorkflowBuilder` into a fixed pipeline. A built `Workflow` only allows **one active
+> `run()` at a time for its whole lifetime** — sending a second message before the first
+> fully finishes raises `WorkflowException: Workflow is already running; concurrent runs are
+> not allowed on the same instance.` Plain `Agent` instances (and tools built from them) have
+> no such restriction, so this agents-as-tools version handles overlapping Playground messages
+> correctly, and casual messages (["Hi"](src/incident-commander/agents/incident_commander.py)) get an instant direct reply instead of being forced
+> through all three agents every time.
 
 ## Prerequisites
 
@@ -68,7 +86,11 @@ implementation (~100 lines, heavily commented).
 ```
 azure.yaml                        # azd project manifest (agent + model deployment)
 src/incident-commander/
-  main.py                         # the 3-agent orchestration (Incident Commander -> Grid Operations -> Customer Experience)
+  main.py                         # entry point: builds the client, starts ResponsesHostServer
+  agents/
+    incident_commander.py         # orchestrator — wires the two specialists as tools
+    grid_operations.py            # technical specialist agent
+    customer_experience.py        # customer-comms specialist agent
   requirements.txt                # agent-framework + hosting dependencies
   Dockerfile                      # container definition (used only for container deploy mode)
   .env.example                    # local-only env var template (never commit real values)
@@ -254,11 +276,14 @@ When you're happy with local behavior, deploy the same code with `azd deploy` (s
 
 ## Customizing for your own scenario
 
-- Rename the three `Agent` instances and edit their `instructions` in
-  [`main.py`](src/incident-commander/main.py) — the orchestration wiring (`WorkflowBuilder`,
-  `add_edge`, `output_executors`) does not need to change.
-- Add a fourth agent by creating another `Agent` + `AgentExecutor` and wiring it with
-  `add_edge(...)` into the pipeline.
+- Rename an agent or edit its `instructions` in its own file under
+  [`agents/`](src/incident-commander/agents/) — no other file needs to change.
+- Add a fourth specialist: create a new `agents/<name>.py` with a `build_<name>_agent(client)`
+  function (same shape as the existing two), then wrap it with `.as_tool(...)` and add it to
+  the `tools=[...]` list in [`agents/incident_commander.py`](src/incident-commander/agents/incident_commander.py).
+- Change the routing policy by editing Incident Commander's `instructions` in
+  [`agents/incident_commander.py`](src/incident-commander/agents/incident_commander.py) — this
+  is the only place that decides when each specialist tool gets called.
 - Swap the model in `azure.yaml` under `services.ai-project.deployments[]` (update the
   agent's `AZURE_AI_MODEL_DEPLOYMENT_NAME` reference if you change the deployment `name`).
 

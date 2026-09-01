@@ -4,7 +4,7 @@ This project is a **Microsoft Foundry hosted agent** — a containerized AI agen
 
 This project was built with the microsoft-foundry skill. Before working on or answering questions about foundry agents, read the microsoft-foundry skill first. If you are in VS Code, read the vscode-microsoft-foundry skill first.
 
-It implements **Incident Commander**, a 3-agent Microsoft Agent Framework orchestration sample (Incident Commander → Grid Operations → Customer Experience) chained with `WorkflowBuilder`. See [README.md](./README.md) for the full scenario and [src/incident-commander/main.py](./src/incident-commander/main.py) for the implementation.
+It implements **Incident Commander**, a 3-agent Microsoft Agent Framework orchestration sample. Incident Commander is the entry-point agent; it delegates to Grid Operations and Customer Experience as callable tools via `Agent.as_tool()` (the "agents-as-tools" pattern) — the model decides which tool(s) to call per message, there's no hand-written switch/if-else. See [README.md](./README.md) for the full scenario, [src/incident-commander/main.py](./src/incident-commander/main.py) for the entry point, and [src/incident-commander/agents/](./src/incident-commander/agents/) for the three agents (one file each).
 
 ## Key files
 
