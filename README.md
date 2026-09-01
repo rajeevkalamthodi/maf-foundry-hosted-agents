@@ -287,6 +287,37 @@ When you're happy with local behavior, deploy the same code with `azd deploy` (s
 - Swap the model in `azure.yaml` under `services.ai-project.deployments[]` (update the
   agent's `AZURE_AI_MODEL_DEPLOYMENT_NAME` reference if you change the deployment `name`).
 
+## Optional: connect a Databricks Genie space
+
+[`agents/databricks_genie_mcp.py`](src/incident-commander/agents/databricks_genie_mcp.py) can give
+Incident Commander a fourth tool that asks a Databricks Genie space natural-language data
+questions, via Databricks' own [managed Genie MCP server](https://docs.databricks.com/aws/en/agents/mcp-tools/managed-mcp)
+(`https://<workspace-hostname>/api/2.0/mcp/genie/{space_id}`) — no separate hosted agent
+required. It's disabled by default and only activates once you set real values.
+
+Configuration follows the same pattern as everything else in this sample: `azure.yaml` declares
+*which* environment variables the agent expects (`services.incident-commander.env`), and the
+actual values live in `azd` environment values — never committed:
+
+```bash
+azd env set DATABRICKS_HOST "https://adb-1234567890123456.7.azuredatabricks.net"
+azd env set DATABRICKS_GENIE_SPACE_ID "<your-genie-space-id>"
+azd env set DATABRICKS_TOKEN "<token>"   # see security note below
+
+azd deploy
+```
+
+For local runs, set the same three variables in `src/incident-commander/.env` instead (see the
+commented-out template in `.env.example`).
+
+> **Security note on `DATABRICKS_TOKEN`.** Prefer a Databricks **service-principal OAuth (M2M)
+> token** over a long-lived personal access token — see
+> [OAuth machine-to-machine authentication](https://learn.microsoft.com/azure/databricks/dev-tools/auth/oauth-m2m).
+> Whichever you use, only ever set it via `azd env set` (stored in the local, git-ignored
+> `.azure/<env>/.env`) or your local `.env` file — never paste a real token into `azure.yaml`,
+> `.env.example`, or any committed file. Grant the token/service-principal the minimum
+> permission needed: `CAN_RUN` on the specific Genie space, nothing broader.
+
 ## Next steps
 
 - [Agent Framework workflows](https://learn.microsoft.com/en-us/agent-framework/workflows/) — learn more about `WorkflowBuilder`

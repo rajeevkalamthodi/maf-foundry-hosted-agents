@@ -25,12 +25,23 @@ allows one active `run()` at a time — see the Agent Framework source,
 instance" error when two messages arrived close together in the Playground.
 Plain `Agent` instances (and the tools built from them) have no such
 restriction, so this version handles overlapping requests correctly.
+
+A tool doesn't have to wrap another Agent Framework agent — it can wrap any
+MCP-compliant server. `agents/databricks_genie_mcp.py` is one example: it
+connects `MCPStreamableHTTPTool` to a customer's Databricks Genie space's
+managed MCP endpoint, so Incident Commander can ask it natural-language data
+questions like any other tool. It's only added to the `tools=[...]` list
+below when `DATABRICKS_GENIE_SPACE_ID` is set, so this sample keeps running
+unmodified until you've connected your own Genie space.
 """
+
+import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 
 from agents.customer_experience import build_customer_experience_agent
+from agents.databricks_genie_mcp import build_databricks_genie_mcp_tool
 from agents.grid_operations import build_grid_operations_agent
 
 
@@ -62,6 +73,11 @@ def build_incident_commander_agent(client: FoundryChatClient) -> Agent:
         arg_description="The Grid Operations technical assessment to turn into a customer update.",
     )
 
+    tools = [grid_operations_tool, customer_experience_tool]
+    if os.environ.get("DATABRICKS_GENIE_SPACE_ID"):
+        # Opt-in fourth tool — see agents/databricks_genie_mcp.py for the Databricks Genie MCP wiring.
+        tools.append(build_databricks_genie_mcp_tool())
+
     return Agent(
         client=client,
         name="incident_commander",
@@ -71,11 +87,14 @@ def build_incident_commander_agent(client: FoundryChatClient) -> Agent:
             "For casual messages (greetings, small talk, questions about who you are), just answer "
             "directly and briefly — do not call any tools.\n\n"
             "For an actual incident report, do the following in order:\n"
-            "1. Call `consult_grid_operations` with the incident details to get the technical assessment.\n"
-            "2. Call `draft_customer_update` with that assessment to get a customer-facing draft.\n"
-            "3. Reply with a short triage summary, followed by both results clearly labeled "
+            "1. If you need specific data you don't already have (e.g. outage history, asset details) "
+            "and a Databricks Genie tool is available, ask it first.\n"
+            "2. Call `consult_grid_operations` with the incident details (and any data you looked up) "
+            "to get the technical assessment.\n"
+            "3. Call `draft_customer_update` with that assessment to get a customer-facing draft.\n"
+            "4. Reply with a short triage summary, followed by both results clearly labeled "
             "'Grid Operations assessment' and 'Customer update (DRAFT — for human review)'.\n\n"
             "You never replace a specialist's judgment — you only classify, route, and assemble."
         ),
-        tools=[grid_operations_tool, customer_experience_tool],
+        tools=tools,
     )
