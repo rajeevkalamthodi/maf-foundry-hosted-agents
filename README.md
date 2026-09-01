@@ -47,17 +47,19 @@ implementation (~100 lines, heavily commented).
 
 ## Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the Foundry agent extension:
+1. **Azure Developer CLI (`azd`)**, version 1.27.1 or later — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
+2. Install (or update) the Foundry agent extension:
    ```bash
    azd extension install azure.ai.agents
+   # If you already have it, make sure it's current — this sample needs >= 1.0.0-beta.9:
+   azd extension update azure.ai.agents
    ```
 3. Authenticate:
    ```bash
    az login
    azd auth login
    ```
-4. Python 3.13 (for local runs outside `azd ai agent run`)
+4. Python 3.11–3.13 for local runs outside `azd ai agent run` — see [Set up Python and run locally](#2-set-up-python-and-run-locally) for platform-specific setup (Windows x64/Arm, macOS, Linux).
 
 ## Project layout
 
@@ -99,9 +101,16 @@ in the Foundry docs — that path does let you supply your own Bicep/capability-
 
 ## Run it
 
-### 1. Provision Azure resources
+Clone (or copy) this repository, then run all commands below from the repository root.
+
+### 1. Create an azd environment and provision Azure resources
+
+`azure.yaml` is checked in, but the per-environment `azd` state (`.azure/`) is not (see
+[Infrastructure](#infrastructure--how-deployment-works-no-hand-written-bicep-needed) below) —
+create it once per person/environment:
 
 ```bash
+azd env new incident-commander-dev
 azd env set AZURE_SUBSCRIPTION_ID <your-subscription-id>
 azd env set AZURE_LOCATION eastus2
 
@@ -109,22 +118,80 @@ azd provision
 ```
 
 This creates a new Foundry resource group, account, project, and the `gpt-5.4` model
-deployment declared in `azure.yaml`.
+deployment declared in `azure.yaml`. If provisioning fails with a message about
+`azure.ai.agents` not satisfying a version constraint, run `azd extension update azure.ai.agents`
+and retry.
 
-### 2. Run locally
+### 2. Set up Python and run locally
 
-```bash
-cd src/incident-commander
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1      # Windows PowerShell
-# source .venv/bin/activate       # macOS/Linux
+Pick the instructions for your platform. Each does the same three things: create a virtual
+environment inside `src/incident-commander/`, install `uv` (so `azd ai agent run` installs
+dependencies in seconds instead of minutes), then start the agent.
+
+> Use Python **3.11–3.13**. Python 3.14 doesn't yet have prebuilt wheels for some dependencies
+> (you'd hit a source build and likely a compiler error) — see the Windows on Arm note below
+> if that's your situation.
+
+#### Windows — Intel/AMD (x64)
+
+```powershell
+cd src\incident-commander
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install uv
 cd ..\..
 
 azd ai agent run --no-client
 ```
 
-In a separate terminal:
+#### Windows on Arm (e.g. Snapdragon)
+
+Native ARM64 Python builds are currently missing prebuilt wheels for some dependencies
+(`cryptography`), which fails with a `link.exe not found` / Rust compiler error. Use an
+**x64 Python interpreter** instead — Windows on Arm runs x64 apps fine under emulation:
+
+```powershell
+cd src\incident-commander
+py -3.12-x64 -m venv .venv        # explicitly pick the x64 build, not the arm64 one
+.\.venv\Scripts\Activate.ps1
+python -m pip install uv
+cd ..\..
+
+azd ai agent run --no-client
+```
+
+If `py -3.12-x64` isn't found, install it from
+[python.org](https://www.python.org/downloads/windows/) — pick the **"Windows installer
+(64-bit)"**, not the Arm64 installer, then retry.
+
+#### macOS (Apple Silicon or Intel)
+
+```bash
+cd src/incident-commander
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install uv
+cd ../..
+
+azd ai agent run --no-client
+```
+
+#### Linux (x64 or Arm64)
+
+```bash
+cd src/incident-commander
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install uv
+cd ../..
+
+azd ai agent run --no-client
+```
+
+### Invoke the local agent
+
+Once you see `Starting agent on http://localhost:8088` (this may take a minute on first run
+while dependencies install), open a **separate terminal** (same platform, any shell) and run:
 
 ```bash
 azd ai agent invoke --local "Feeder 12 tripped in the downtown core, ~4,200 customers affected. Cause unknown."
@@ -152,6 +219,26 @@ azd ai agent invoke "Feeder 12 tripped in the downtown core, ~4,200 customers af
 azd ai agent show --output json   # status + endpoints
 azd down                          # remove all Azure resources when you're done
 ```
+
+## Troubleshooting
+
+- **`azd env set` fails with no environment found.** You skipped `azd env new <name>` — this
+  repo doesn't (and shouldn't) commit `.azure/`, so each person/environment creates their own.
+- **Provisioning fails with an `azure.ai.agents` version constraint error.** Run
+  `azd extension update azure.ai.agents` and re-run `azd provision`.
+- **Provisioning fails with `ServiceModelDeprecating` for the model.** The pinned model/version
+  in `azure.yaml` (`services.ai-project.deployments[]`) has been deprecated in your region.
+  Run `az cognitiveservices model list --location <region> --subscription <sub-id> -o json` to
+  find a current, non-deprecated version and update `azure.yaml` accordingly.
+- **Local `azd ai agent run` fails building `cryptography` from source** (seen on Python 3.14 /
+  Windows on Arm, with errors like `linker link.exe not found`): a prebuilt wheel isn't available
+  for that Python version/architecture yet. Delete `src/incident-commander/.venv` and follow the
+  platform-specific steps in [Set up Python and run locally](#2-set-up-python-and-run-locally) —
+  on Windows on Arm, make sure you picked the **x64** Python build, not Arm64.
+- **`py` / `py -3.12-x64` not recognized (Windows).** The [Python Launcher](https://docs.python.org/3/using/windows.html#python-launcher-for-windows)
+  isn't installed or that specific version isn't installed. Install Python from
+  [python.org](https://www.python.org/downloads/windows/) with "Install launcher for all users"
+  checked, or substitute the full path to `python.exe` for that version.
 
 ## Customizing for your own scenario
 
