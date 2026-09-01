@@ -59,7 +59,9 @@ implementation (~100 lines, heavily commented).
    az login
    azd auth login
    ```
-4. Python 3.11–3.13 for local runs outside `azd ai agent run` — see [Set up Python and run locally](#2-set-up-python-and-run-locally) for platform-specific setup (Windows x64/Arm, macOS, Linux).
+4. *(Optional)* Python 3.11–3.13 — only needed if you want to run the agent locally before
+   deploying (see [Optional: run locally before deploying](#optional-run-locally-before-deploying)).
+   Not required to deploy straight to Azure.
 
 ## Project layout
 
@@ -101,7 +103,8 @@ in the Foundry docs — that path does let you supply your own Bicep/capability-
 
 ## Run it
 
-Clone (or copy) this repository, then run all commands below from the repository root.
+Clone (or copy) this repository, then run all commands below from the repository root. This
+path goes straight to Azure — no local Python setup required.
 
 ### 1. Create an azd environment and provision Azure resources
 
@@ -122,7 +125,36 @@ deployment declared in `azure.yaml`. If provisioning fails with a message about
 `azure.ai.agents` not satisfying a version constraint, run `azd extension update azure.ai.agents`
 and retry.
 
-### 2. Set up Python and run locally
+### 2. Deploy to Microsoft Foundry
+
+```bash
+azd deploy
+```
+
+`azd deploy` zips `src/incident-commander/`, uploads it to Foundry, builds the runtime
+remotely, and registers a new immutable agent version — no Docker, ACR, or local Python
+environment required for the default `code` deploy mode used here.
+
+### 3. Invoke the deployed agent
+
+```bash
+azd ai agent invoke "Feeder 12 tripped in the downtown core, ~4,200 customers affected. Cause unknown."
+```
+
+### 4. Check status / tear down
+
+```bash
+azd ai agent show --output json   # status + endpoints
+azd down                          # remove all Azure resources when you're done
+```
+
+## Optional: run locally before deploying
+
+Skip this whole section if you just want the agent running in Azure — steps 1–4 above are all
+you need. Come back here only if you want to iterate on `main.py` and test changes on your own
+machine (`http://localhost:8088`) before running `azd deploy` again.
+
+### Set up Python and run locally
 
 Pick the instructions for your platform. Each does the same three things: create a virtual
 environment inside `src/incident-commander/`, install `uv` (so `azd ai agent run` installs
@@ -197,28 +229,7 @@ while dependencies install), open a **separate terminal** (same platform, any sh
 azd ai agent invoke --local "Feeder 12 tripped in the downtown core, ~4,200 customers affected. Cause unknown."
 ```
 
-### 3. Deploy to Microsoft Foundry
-
-```bash
-azd deploy
-```
-
-`azd deploy` zips `src/incident-commander/`, uploads it to Foundry, builds the runtime
-remotely, and registers a new immutable agent version — no Docker or ACR required for the
-default `code` deploy mode used here.
-
-### 4. Invoke the deployed agent
-
-```bash
-azd ai agent invoke "Feeder 12 tripped in the downtown core, ~4,200 customers affected. Cause unknown."
-```
-
-### 5. Check status / tear down
-
-```bash
-azd ai agent show --output json   # status + endpoints
-azd down                          # remove all Azure resources when you're done
-```
+When you're happy with local behavior, deploy the same code with `azd deploy` (step 2 above).
 
 ## Troubleshooting
 
@@ -233,8 +244,9 @@ azd down                          # remove all Azure resources when you're done
 - **Local `azd ai agent run` fails building `cryptography` from source** (seen on Python 3.14 /
   Windows on Arm, with errors like `linker link.exe not found`): a prebuilt wheel isn't available
   for that Python version/architecture yet. Delete `src/incident-commander/.venv` and follow the
-  platform-specific steps in [Set up Python and run locally](#2-set-up-python-and-run-locally) —
-  on Windows on Arm, make sure you picked the **x64** Python build, not Arm64.
+  platform-specific steps in [Set up Python and run locally](#set-up-python-and-run-locally) —
+  on Windows on Arm, make sure you picked the **x64** Python build, not Arm64. This only affects
+  the optional local-run path, not `azd deploy`.
 - **`py` / `py -3.12-x64` not recognized (Windows).** The [Python Launcher](https://docs.python.org/3/using/windows.html#python-launcher-for-windows)
   isn't installed or that specific version isn't installed. Install Python from
   [python.org](https://www.python.org/downloads/windows/) with "Install launcher for all users"
