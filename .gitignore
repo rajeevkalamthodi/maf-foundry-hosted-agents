@@ -1,0 +1,11 @@
+.azure
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Local-only environment files (never commit real endpoints/keys)
+.env
+!.env.example
